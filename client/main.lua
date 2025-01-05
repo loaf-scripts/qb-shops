@@ -41,6 +41,12 @@ local function listenForControl()
     end)
 end
 
+---@type { [number]: string }
+local loafShops = {}
+
+---@type { [number]: boolean }
+local loafPeds = {}
+
 local function createPeds()
     if pedSpawned then return end
     local defaultTargetIcon = 'fas fa-shopping-cart'
@@ -68,15 +74,30 @@ local function createPeds()
                 distance = 2.0
             })
         else
-            local current = type(v['ped']) == 'number' and v['ped'] or joaat(v['ped'])
-            RequestModel(current)
-            while not HasModelLoaded(current) do Wait(0) end
-            ShopPed[k] = CreatePed(0, current, v['coords'].x, v['coords'].y, v['coords'].z - 1, v['coords'].w, false, false)
-            TaskStartScenarioInPlace(ShopPed[k], v['scenario'], 0, true)
-            FreezeEntityPosition(ShopPed[k], true)
-            SetEntityInvincible(ShopPed[k], true)
-            SetBlockingOfNonTemporaryEvents(ShopPed[k], true)
-            if Config.UseTarget then
+            local loafStore = GetResourceState("loaf_storerobbery") == "started" and exports.loaf_storerobbery:GetClosestStoreFromCoords(vector3(v.coords.x, v.coords.y, v.coords.z), 10)
+
+            if loafStore then
+                local ped = exports.loaf_storerobbery:GetStoreEntity(loafStore, "clerk")
+
+                if ped then
+                    ShopPed[k] = ped
+                    loafPeds[ped] = true
+                end
+
+                loafShops[loafStore] = k
+            else
+                local current = type(v['ped']) == 'number' and v['ped'] or joaat(v['ped'])
+
+                RequestModel(current)
+                while not HasModelLoaded(current) do Wait(0) end
+                ShopPed[k] = CreatePed(0, current, v['coords'].x, v['coords'].y, v['coords'].z - 1, v['coords'].w, false, false)
+                TaskStartScenarioInPlace(ShopPed[k], v['scenario'], 0, true)
+                FreezeEntityPosition(ShopPed[k], true)
+                SetEntityInvincible(ShopPed[k], true)
+                SetBlockingOfNonTemporaryEvents(ShopPed[k], true)
+            end
+
+            if Config.UseTarget and ShopPed[k] then
                 exports['qb-target']:AddTargetEntity(ShopPed[k], {
                     options = {
                         {
@@ -87,7 +108,10 @@ local function createPeds()
                             event = 'qb-shops:server:openShop',
                             shop = k,
                             job = v.requiredJob,
-                            gang = v.requiredGang
+                            gang = v.requiredGang,
+                            canInteract = function(entity)
+                                return not IsPedDeadOrDying(entity, false)
+                            end
                         }
                     },
                     distance = 2.0
@@ -98,10 +122,66 @@ local function createPeds()
     pedSpawned = true
 end
 
+RegisterNetEvent("loaf_storerobbery:entityCreated", function(netId, entityType, storeId)
+    if entityType ~= "clerk" then
+        return
+    end
+
+    local shopName = loafShops[storeId]
+
+    if not shopName then
+        return
+    end
+
+    local timeout = GetGameTimer() + 5000
+
+    while not NetworkDoesNetworkIdExist(netId) and timeout > GetGameTimer() do
+        Wait(500)
+    end
+
+    if not NetworkDoesNetworkIdExist(netId) then
+        return
+    end
+
+    if ShopPed[shopName] and Config.UseTarget then
+        loafPeds[ShopPed[shopName]] = nil
+        exports['qb-target']:RemoveTargetEntity(ShopPed[shopName])
+    end
+
+    ShopPed[shopName] = NetworkGetEntityFromNetworkId(netId)
+    loafPeds[ShopPed[shopName]] = true
+
+    local shopData = Config.Locations[shopName]
+    local defaultTargetIcon = 'fas fa-shopping-cart'
+    local defaultTargetLabel = 'Open Shop'
+
+    exports['qb-target']:AddTargetEntity(ShopPed[shopName], {
+        options = {
+            {
+                label = shopData.targetLabel or defaultTargetLabel,
+                icon = shopData.targetIcon or defaultTargetIcon,
+                item = shopData.requiredItem,
+                type = 'server',
+                event = 'qb-shops:server:openShop',
+                shop = shopName,
+                job = shopData.requiredJob,
+                gang = shopData.requiredGang,
+                canInteract = function(entity)
+                    return not IsPedDeadOrDying(entity, false)
+                end
+            }
+        },
+        distance = 2.0
+    })
+end)
+
 local function deletePeds()
     if not pedSpawned then return end
     for _, v in pairs(ShopPed) do
-        DeletePed(v)
+        if not loafPeds[v] then
+            DeleteEntity(v)
+        end
+        exports['qb-target']:RemoveTargetEntity(v)
     end
     pedSpawned = false
 end

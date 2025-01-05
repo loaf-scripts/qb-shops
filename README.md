@@ -1,5 +1,6 @@
-# qb-shops
-Shops For QB-Core
+# qb-shops for loaf_storerobbery
+
+Shops For QB-Core, modified to use the peds from [loaf_storerobbery](https://forum.cfx.re/t/loaf-store-robbery/5295488)
 
 # License
 
